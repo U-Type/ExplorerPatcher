@@ -115,19 +115,76 @@ static void _sws_WindowSwitcher_StartDragHover(sws_WindowSwitcher* sws)
     }
 }
 
-// Releasing Alt closes the overlay without performing a second Alt+Tab.
+// A hovered thumbnail is the definitive selection at Alt release, even if
+// its earlier no-activate Z-order preview was denied or still restoring.
+// Check actual cursor position immediately; Win32 mouse messages can be
+// intercepted by the drag source and the 25ms poll can lag behind release.
+static INT _sws_WindowSwitcher_ResolveDragHoverIndex(sws_WindowSwitcher* sws)
+{
+    if (!sws) return -1;
+    sws_WindowSwitcherLayoutWindow* list = sws->layout.pWindowList.pList;
+    if (!list) return -1;
+    POINT pt;
+    if (!GetCursorPos(&pt) || !ScreenToClient(sws->hWnd, &pt))
+        return -1;
+
+    // Prefer the live image itself, then the surrounding thumbnail tile
+    // (title and border), which is already what WM_MOUSEMOVE highlights.
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        for (unsigned int i = 0; i < sws->layout.pWindowList.cbSize; ++i)
+        {
+            RECT rc = pass == 0 ? list[i].rcThumbnail : list[i].rcWindow;
+            if (PtInRect(&rc, pt) && IsWindow(list[i].hWnd))
+                return (INT)i;
+        }
+    }
+    return -1;
+}
+
 static void _sws_WindowSwitcher_CompleteDragHover(sws_WindowSwitcher* sws)
 {
     if (!sws) return;
-    HWND target = sws->hDragPreviewWnd;
-    ShowWindow(sws->hWnd, SW_HIDE);
-    if (IsWindow(target))
+    sws_WindowSwitcherLayoutWindow* list = sws->layout.pWindowList.pList;
+    if (!list || !sws->layout.pWindowList.cbSize)
     {
-        if (IsIconic(target))
-            ShowWindowAsync(target, SW_RESTORE);
-        SetWindowPos(target, HWND_TOP, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+        ShowWindow(sws->hWnd, SW_HIDE);
+        return;
     }
+
+    INT index = _sws_WindowSwitcher_ResolveDragHoverIndex(sws);
+    if (index < 0 && IsWindow(sws->hDragPreviewWnd))
+    {
+        // Preserve the most recent valid hover if Alt was released while
+        // the pointer was passing through padding / empty grid space.
+        for (unsigned int i = 0; i < sws->layout.pWindowList.cbSize; ++i)
+        {
+            if (list[i].hWnd == sws->hDragPreviewWnd)
+            {
+                index = (INT)i;
+                break;
+            }
+        }
+    }
+    if (index >= 0)
+    {
+        sws->layout.iIndex = index;
+        HWND target = list[index].hWnd;
+        // Retain the working Win+D restore logic, but commit selection with
+        // the SAME routine as a Tab/wheel selection, not SWP_NOACTIVATE.
+        if (IsWindow(target) && IsIconic(target))
+            ShowWindowAsync(target, SW_RESTORE);
+        if (IsWindow(target))
+        {
+            HWND popup = sws_WindowHelpers_GetLastActivePopup(target);
+            if (IsWindow(popup) && IsIconic(popup))
+                ShowWindowAsync(popup, SW_RESTORE);
+        }
+    }
+
+    // This path uses SwitchToThisWindow(..., TRUE) and then dismisses SWS.
+    // It matches the selection path the user has confirmed always works.
+    _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(sws);
 }
 
 static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
@@ -138,8 +195,8 @@ static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
     // cursor state rather than relying on WM_MOUSEMOVE/WM_KEYUP.
     if (!(GetAsyncKeyState(VK_MENU) & 0x8000) && !sws->bWasControl)
     {
-        if (sws->bDragHoverActivated && !sws->bDragNavigationExplicit)
-            _sws_WindowSwitcher_CompleteDragHover(sws); // do not commit an extra Alt+Tab
+        if (!sws->bDragNavigationExplicit)
+            _sws_WindowSwitcher_CompleteDragHover(sws); // commit cursor-selected window
         else
             _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(sws);
         return;
@@ -242,8 +299,7 @@ $new = @'
     {
         if (!_this->bWasControl && !(GetAsyncKeyState(VK_MENU) & 0x8000))
         {
-            if (_this->bDragHoverMode && _this->bDragHoverActivated &&
-                !_this->bDragNavigationExplicit)
+            if (_this->bDragHoverMode && !_this->bDragNavigationExplicit)
                 _sws_WindowSwitcher_CompleteDragHover(_this);
             else
                 _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(_this);
@@ -311,8 +367,7 @@ $old = @'
     else if (uMsg == WM_HOTKEY || uMsg == WM_KEYDOWN
 '@
 $new = @'
-        if (_this->bDragHoverMode && _this->bDragHoverActivated &&
-            !_this->bDragNavigationExplicit)
+        if (_this->bDragHoverMode && !_this->bDragNavigationExplicit)
             _sws_WindowSwitcher_CompleteDragHover(_this);
         else
             _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(_this);
