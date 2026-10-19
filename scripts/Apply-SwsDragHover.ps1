@@ -22,29 +22,34 @@ function Replace-Single([string]$name, [string]$old, [string]$new) {
     $script:normalized[$name] = $text.Replace($old, $new)
 }
 # SimpleWindowSwitcher/sws_def.h: patch 1
-Replace-Single 'SimpleWindowSwitcher/sws_def.h' (@'
+$old = @'
 #define SWS_WINDOWSWITCHER_TIMER_CLOSEHWND_DELAY 300
-'@) (@'
+'@
+$new = @'
 #define SWS_WINDOWSWITCHER_TIMER_CLOSEHWND_DELAY 300
 #define SWS_WINDOWSWITCHER_TIMER_DRAGHOVER 18
 #define SWS_WINDOWSWITCHER_TIMER_DRAGHOVER_DELAY 25
 #define SWS_WINDOWSWITCHER_DRAG_WHEEL_MSG (WM_APP + 8)
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_def.h' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.h: patch 2
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.h' (@'
+$old = @'
     BOOL bIsMouseClicking;
-'@) (@'
+'@
+$new = @'
     BOOL bIsMouseClicking;
     BOOL bDragHoverMode;
     BOOL bDragHoverActivated;
     BOOL bDragNavigationExplicit;
     HWND hDragPreviewWnd;
     HHOOK hDragWheelHook;
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.h' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 3
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
 static void WINAPI _sws_WindowSwitcher_Calculate(
-'@) (@'
+'@
+$new = @'
 // The overlay does not accept files. A layered WS_EX_TRANSPARENT window keeps
 // its visual preview, while drag/drop hit testing reaches the window beneath.
 static sws_WindowSwitcher* g_swsDragWheelOwner = NULL;
@@ -161,12 +166,14 @@ static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
 }
 
 static void WINAPI _sws_WindowSwitcher_Calculate(
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 4
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
 static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
 {
-'@) (@'
+'@
+$new = @'
 static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
 {
     // Only an already-held mouse button enables drag-hover mode.
@@ -177,18 +184,21 @@ static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
         _this->bDragNavigationExplicit = FALSE;
         _this->hDragPreviewWnd = NULL;
     }
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 5
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
     SetWindowPos(_this->hWnd, 0, _this->layout.iX, _this->layout.iY, _this->layout.iWidth, _this->layout.iHeight, SWP_NOZORDER);
     ShowWindow(_this->hWnd, SW_SHOW);
-'@) (@'
+'@
+$new = @'
     _sws_WindowSwitcher_SetDragPassthrough(_this, _this->bDragHoverMode);
     SetWindowPos(_this->hWnd, 0, _this->layout.iX, _this->layout.iY, _this->layout.iWidth, _this->layout.iHeight, SWP_NOZORDER);
     ShowWindow(_this->hWnd, SW_SHOW);
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 6
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
     if (uMsg == WM_TIMER && wParam == SWS_WINDOWSWITCHER_TIMER_ASYNCKEYCHECK)
     {
         if (!_this->bWasControl && !(GetAsyncKeyState(VK_MENU) & 0x8000))
@@ -198,7 +208,8 @@ Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
             return 0;
         }
     }
-'@) (@'
+'@
+$new = @'
     if (uMsg == WM_TIMER && wParam == SWS_WINDOWSWITCHER_TIMER_DRAGHOVER)
     {
         _sws_WindowSwitcher_PollDragHover(_this);
@@ -223,56 +234,66 @@ Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
             return 0;
         }
     }
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 7
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
     else if (uMsg == WM_DESTROY)
     {
         PostQuitMessage(0);
-'@) (@'
+'@
+$new = @'
     else if (uMsg == WM_DESTROY)
     {
         _sws_WindowSwitcher_EndDragHover(_this);
         PostQuitMessage(0);
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 8
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
         if (wParam == FALSE)
         {
             //ResetEvent(_this->hFlashAnimationSignal);
-'@) (@'
+'@
+$new = @'
         if (wParam == FALSE)
         {
             _sws_WindowSwitcher_EndDragHover(_this);
             //ResetEvent(_this->hFlashAnimationSignal);
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 9
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
             //SetWindowPos(_this->hWnd, 0, _this->layout.iX, _this->layout.iY, _this->layout.iWidth, _this->layout.iHeight, SWP_NOZORDER);
             _this->dwOriginalScrollWheelBehavior = _this->dwScrollWheelBehavior;
-'@) (@'
+'@
+$new = @'
             //SetWindowPos(_this->hWnd, 0, _this->layout.iX, _this->layout.iY, _this->layout.iWidth, _this->layout.iHeight, SWP_NOZORDER);
             _this->dwOriginalScrollWheelBehavior = _this->dwScrollWheelBehavior;
             _sws_WindowSwitcher_StartDragHover(_this);
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 10
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
     else if ((uMsg == WM_KEYUP && wParam == VK_ESCAPE) || uMsg == WM_KILLFOCUS || (uMsg == WM_ACTIVATE && wParam == WA_INACTIVE))
     {
         _this->bWasControl = FALSE;
-'@) (@'
+'@
+$new = @'
     else if ((uMsg == WM_KEYUP && wParam == VK_ESCAPE) || uMsg == WM_KILLFOCUS || (uMsg == WM_ACTIVATE && wParam == WA_INACTIVE))
     {
         if (_this->bDragHoverMode && uMsg != WM_KEYUP) return 0;
         _this->bWasControl = FALSE;
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 11
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
         _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(_this);
         return 0;
     }
     else if (uMsg == WM_HOTKEY || uMsg == WM_KEYDOWN
-'@) (@'
+'@
+$new = @'
         if (_this->bDragHoverMode && _this->bDragHoverActivated &&
             !_this->bDragNavigationExplicit)
             ShowWindow(hWnd, SW_HIDE);
@@ -281,13 +302,15 @@ Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
         return 0;
     }
     else if (uMsg == WM_HOTKEY || uMsg == WM_KEYDOWN
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 12
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
+$old = @'
             else
             {
                 int direction = SWS_WINDOWSWITCHERLAYOUT_COMPUTE_DIRECTION_INITIAL;
-'@) (@'
+'@
+$new = @'
             else
             {
                 if (_this->bDragHoverMode &&
@@ -296,7 +319,8 @@ Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' (@'
                      (uMsg == WM_HOTKEY && (LOWORD(lParam) & MOD_ALT))))
                     _this->bDragNavigationExplicit = TRUE;
                 int direction = SWS_WINDOWSWITCHERLAYOUT_COMPUTE_DIRECTION_INITIAL;
-'@)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 foreach ($name in $normalized.Keys) {
     $content = [string]$normalized[$name]
     if ($originals[$name]) { $content = $content.Replace("`n", "`r`n") }
