@@ -47,6 +47,7 @@ $new = @'
     BOOL bDragHoverActivated;
     BOOL bDragNavigationExplicit;
     HWND hDragPreviewWnd;
+    INT iDragHoverIndex;
     HHOOK hDragWheelHook;
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.h' $old $new
@@ -101,6 +102,7 @@ static void _sws_WindowSwitcher_EndDragHover(sws_WindowSwitcher* sws)
     sws->bDragHoverActivated = FALSE;
     sws->bDragNavigationExplicit = FALSE;
     sws->hDragPreviewWnd = NULL;
+    sws->iDragHoverIndex = -1;
     _sws_WindowSwitcher_SetDragPassthrough(sws, FALSE);
 }
 
@@ -148,12 +150,18 @@ static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
     for (unsigned int i = 0; i < sws->layout.pWindowList.cbSize; i++)
     {
         if (!PtInRect(&list[i].rcThumbnail, pt)) continue;
+        // Track the ORIGINAL thumbnail slot, not the current MRU position.
+        // Re-entering a slot after hovering elsewhere activates it again.
+        if (sws->iDragHoverIndex == (int)i) return;
         HWND target = list[i].hWnd;
         if (!IsWindow(target) || target == sws->hWnd ||
-            (sws->layout.bIncludeWallpaper && target == sws->layout.hWndWallpaper) ||
-            target == sws->hDragPreviewWnd)
+            (sws->layout.bIncludeWallpaper && target == sws->layout.hWndWallpaper))
+        {
+            sws->iDragHoverIndex = -1;
             return;
+        }
 
+        sws->iDragHoverIndex = (int)i;
         sws->hDragPreviewWnd = target;
         sws->bDragHoverActivated = TRUE; // set before focus-loss notification
         sws->layout.iIndex = (int)i;
@@ -168,6 +176,8 @@ static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
             RedrawWindow(sws->hWnd, NULL, NULL, RDW_INVALIDATE | RDW_INTERNALPAINT);
         return;
     }
+    // A thumbnail can also be re-entered after crossing empty grid space.
+    sws->iDragHoverIndex = -1;
 }
 
 static void WINAPI _sws_WindowSwitcher_Calculate(
@@ -181,6 +191,11 @@ static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
 $new = @'
 static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
 {
+    // Freeze the snapshot once the drag overlay is up. Hover previews generate
+    // foreground/shell events which otherwise rebuild and move the grid.
+    if (_this->bDragHoverMode && IsWindowVisible(_this->hWnd))
+        return;
+
     // Only an already-held mouse button enables drag-hover mode.
     if (!IsWindowVisible(_this->hWnd))
     {
@@ -188,6 +203,7 @@ static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
         _this->bDragHoverActivated = FALSE;
         _this->bDragNavigationExplicit = FALSE;
         _this->hDragPreviewWnd = NULL;
+        _this->iDragHoverIndex = -1;
     }
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
@@ -326,6 +342,39 @@ $new = @'
                 int direction = SWS_WINDOWSWITCHERLAYOUT_COMPUTE_DIRECTION_INITIAL;
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
+# SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 13 (suppress automatic
+# shell event-triggered re-enumeration during a drag preview).
+$old = @'
+            if (IsWindowVisible(_this->hWnd))
+            {
+                sws_window* pHWNDList = _this->pHWNDList.pList;
+'@
+$new = @'
+            if (IsWindowVisible(_this->hWnd) && !_this->bDragHoverMode)
+            {
+                sws_window* pHWNDList = _this->pHWNDList.pList;
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
+
+# SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 14
+$old = @'
+            if (IsWindowVisible(_this->hWnd) && (HWND)lParam != _this->hWnd && sws_WindowHelpers_IsAltTabWindow((HWND)lParam))
+'@
+$new = @'
+            if (IsWindowVisible(_this->hWnd) && !_this->bDragHoverMode &&
+                (HWND)lParam != _this->hWnd && sws_WindowHelpers_IsAltTabWindow((HWND)lParam))
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
+
+# SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 15
+$old = @'
+                if (!pWindowList[_this->layout.iIndex].hThumbnail)
+'@
+$new = @'
+                if (!pWindowList[_this->layout.iIndex].hThumbnail && !_this->bDragHoverMode)
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
+
 foreach ($name in $normalized.Keys) {
     $content = [string]$normalized[$name]
     if ($originals[$name]) { $content = $content.Replace("`n", "`r`n") }
