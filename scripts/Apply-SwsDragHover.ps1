@@ -15,9 +15,14 @@ foreach ($name in @('SimpleWindowSwitcher/sws_WindowSwitcher.c',
     $normalized[$name] = $raw.Replace("`r`n", "`n")
 }
 function Replace-Single([string]$name, [string]$old, [string]$new) {
+    # On Windows a checked-out .ps1 may use CRLF here-strings. The SWS source
+    # has already been normalized to LF; normalize both anchors as well.
+    $old = $old.Replace("`r`n", "`n")
+    $new = $new.Replace("`r`n", "`n")
     $text = [string]$script:normalized[$name]
     if (-not $text.Contains($old) -or $text.IndexOf($old) -ne $text.LastIndexOf($old)) {
-        throw "Expected unique SWS source anchor missing or ambiguous in $name"
+        $line = (Get-PSCallStack | Select-Object -First 1).ScriptLineNumber
+        throw "Expected unique SWS source anchor missing or ambiguous in $name (patch invocation line: $line; anchor starts: $($old.Substring(0, [Math]::Min(64, $old.Length))))"
     }
     $script:normalized[$name] = $text.Replace($old, $new)
 }
