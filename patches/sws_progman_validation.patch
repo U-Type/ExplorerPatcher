@@ -1,7 +1,7 @@
 diff --git a/SimpleWindowSwitcher/sws_WindowSwitcher.c b/SimpleWindowSwitcher/sws_WindowSwitcher.c
 --- a/SimpleWindowSwitcher/sws_WindowSwitcher.c
 +++ b/SimpleWindowSwitcher/sws_WindowSwitcher.c
-@@ -1,20 +1,31 @@
+@@ -1540,20 +1540,31 @@
  static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
  {
      long long a1 = sws_milliseconds_now();
