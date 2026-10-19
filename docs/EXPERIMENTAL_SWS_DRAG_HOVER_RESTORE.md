@@ -1,0 +1,9 @@
+# Drag-hover: restore minimized windows without mouse pass-through
+
+Experimental build based on upstream ExplorerPatcher 26100.8457.70.4 master and the previous stable-layout drag-hover build, retaining the Progman Alt+Tab latency fix and `ep_taskbar` binaries pinned to v1.0.1.0. All older experimental branches and fork master stay untouched.
+
+During a desktop/File Explorer file drag with left mouse held, open Alt+Tab and hover a thumbnail. SWS remains visible and is NOT transparent to mouse input: the actual drop must occur after the user releases Alt, which hides the overlay without an extra selection. Applications stay on their original monitors. Cursor may show an expected no-drop glyph while over the switcher because it is intentionally not registered as a drop target.
+
+The hover routine restores minimized windows via `ShowWindowAsync(SW_RESTORE)`, throttled to once per 200ms for each pending target. It waits for `IsIconic` to become false before raising the application's HWND via `SetWindowPos(HWND_TOP, SWP_NOACTIVATE)`. If Alt is released before completion, closing the overlay reasserts the restore request for the most recently hovered application. Other existing safeguards remain: frozen thumbnail order, repeatable A-B-A hovering, Alt-release suppression of spurious selection, deliberate Tab/wheel navigation via SWS's existing algorithm with a drag-only wheel event relay.
+
+Test on Windows 11 across multiple monitors: Win+D before dragging; individually minimize Illustrator; hover A-B-A several times; release Alt and then release the file into a native drop target; compare with normal (non-drag) Alt+Tab. GitHub CI compiles the result but cannot verify desktop focus, Show Desktop, or actual drag/drop semantics. Keep the previously successful build available for rollback.

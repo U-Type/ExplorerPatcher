@@ -47,6 +47,8 @@ $new = @'
     BOOL bDragHoverActivated;
     BOOL bDragNavigationExplicit;
     HWND hDragPreviewWnd;
+    HWND hDragRestorePendingWnd;
+    DWORD dwDragRestoreLastTick;
     INT iDragHoverIndex;
     HHOOK hDragWheelHook;
 '@
@@ -56,8 +58,8 @@ $old = @'
 static void WINAPI _sws_WindowSwitcher_Calculate(
 '@
 $new = @'
-// The overlay does not accept files. A layered WS_EX_TRANSPARENT window keeps
-// its visual preview, while drag/drop hit testing reaches the window beneath.
+// Keep the normal switcher overlay interactive while a dragged file is held.
+// The user releases Alt before dropping the file into the target application.
 static sws_WindowSwitcher* g_swsDragWheelOwner = NULL;
 
 static LRESULT CALLBACK _sws_WindowSwitcher_DragWheelHook(int code, WPARAM wParam, LPARAM lParam)
@@ -75,19 +77,6 @@ static LRESULT CALLBACK _sws_WindowSwitcher_DragWheelHook(int code, WPARAM wPara
     return CallNextHookEx(sws ? sws->hDragWheelHook : NULL, code, wParam, lParam);
 }
 
-static void _sws_WindowSwitcher_SetDragPassthrough(sws_WindowSwitcher* sws, BOOL enabled)
-{
-    if (!sws || !sws->hWnd) return;
-    LONG_PTR oldStyle = GetWindowLongPtrW(sws->hWnd, GWL_EXSTYLE);
-    LONG_PTR style = enabled ? (oldStyle | WS_EX_TRANSPARENT) : (oldStyle & ~WS_EX_TRANSPARENT);
-    if (style != oldStyle)
-    {
-        SetWindowLongPtrW(sws->hWnd, GWL_EXSTYLE, style);
-        SetWindowPos(sws->hWnd, NULL, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    }
-}
-
 static void _sws_WindowSwitcher_EndDragHover(sws_WindowSwitcher* sws)
 {
     if (!sws) return;
@@ -103,7 +92,8 @@ static void _sws_WindowSwitcher_EndDragHover(sws_WindowSwitcher* sws)
     sws->bDragNavigationExplicit = FALSE;
     sws->hDragPreviewWnd = NULL;
     sws->iDragHoverIndex = -1;
-    _sws_WindowSwitcher_SetDragPassthrough(sws, FALSE);
+    sws->hDragRestorePendingWnd = NULL;
+    sws->dwDragRestoreLastTick = 0;
 }
 
 static void _sws_WindowSwitcher_StartDragHover(sws_WindowSwitcher* sws)
@@ -125,6 +115,21 @@ static void _sws_WindowSwitcher_StartDragHover(sws_WindowSwitcher* sws)
     }
 }
 
+// Releasing Alt closes the overlay without performing a second Alt+Tab.
+static void _sws_WindowSwitcher_CompleteDragHover(sws_WindowSwitcher* sws)
+{
+    if (!sws) return;
+    HWND target = sws->hDragPreviewWnd;
+    ShowWindow(sws->hWnd, SW_HIDE);
+    if (IsWindow(target))
+    {
+        if (IsIconic(target))
+            ShowWindowAsync(target, SW_RESTORE);
+        SetWindowPos(target, HWND_TOP, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+    }
+}
+
 static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
 {
     if (!sws || !sws->bDragHoverMode || !IsWindowVisible(sws->hWnd)) return;
@@ -134,7 +139,7 @@ static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
     if (!(GetAsyncKeyState(VK_MENU) & 0x8000) && !sws->bWasControl)
     {
         if (sws->bDragHoverActivated && !sws->bDragNavigationExplicit)
-            ShowWindow(sws->hWnd, SW_HIDE); // do not commit an extra Alt+Tab
+            _sws_WindowSwitcher_CompleteDragHover(sws); // do not commit an extra Alt+Tab
         else
             _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(sws);
         return;
@@ -204,18 +209,9 @@ static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
         _this->bDragNavigationExplicit = FALSE;
         _this->hDragPreviewWnd = NULL;
         _this->iDragHoverIndex = -1;
+        _this->hDragRestorePendingWnd = NULL;
+        _this->dwDragRestoreLastTick = 0;
     }
-'@
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
-# SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 5
-$old = @'
-    SetWindowPos(_this->hWnd, 0, _this->layout.iX, _this->layout.iY, _this->layout.iWidth, _this->layout.iHeight, SWP_NOZORDER);
-    ShowWindow(_this->hWnd, SW_SHOW);
-'@
-$new = @'
-    _sws_WindowSwitcher_SetDragPassthrough(_this, _this->bDragHoverMode);
-    SetWindowPos(_this->hWnd, 0, _this->layout.iX, _this->layout.iY, _this->layout.iWidth, _this->layout.iHeight, SWP_NOZORDER);
-    ShowWindow(_this->hWnd, SW_SHOW);
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 6
@@ -248,7 +244,7 @@ $new = @'
         {
             if (_this->bDragHoverMode && _this->bDragHoverActivated &&
                 !_this->bDragNavigationExplicit)
-                ShowWindow(hWnd, SW_HIDE);
+                _sws_WindowSwitcher_CompleteDragHover(_this);
             else
                 _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(_this);
             KillTimer(hWnd, SWS_WINDOWSWITCHER_TIMER_ASYNCKEYCHECK);
@@ -317,7 +313,7 @@ $old = @'
 $new = @'
         if (_this->bDragHoverMode && _this->bDragHoverActivated &&
             !_this->bDragNavigationExplicit)
-            ShowWindow(hWnd, SW_HIDE);
+            _sws_WindowSwitcher_CompleteDragHover(_this);
         else
             _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(_this);
         return 0;
@@ -388,27 +384,41 @@ $old = @'
         SwitchToThisWindow(IsWindow(popup) && IsWindowVisible(popup) ? popup : target, TRUE);
 '@
 $new = @'
-        // Avoid SwitchToThisWindow/SetForegroundWindow during OLE dragging.
-        // Windows can reject focus stealing and flash the taskbar button;
-        // Z-order placement without activation is what a hover preview needs.
+        // Win+D can leave windows minimized and raise the desktop. Restore
+        // first, then on a later poll reapply normal-window Z ordering.
         HWND popup = sws_WindowHelpers_GetLastActivePopup(target);
         HWND preview = (IsWindow(popup) && IsWindowVisible(popup)) ? popup : target;
+        BOOL minimized = IsIconic(target) || (preview != target && IsIconic(preview));
+        if (minimized)
+        {
+            DWORD tick = GetTickCount();
+            if (sws->hDragRestorePendingWnd != target ||
+                (DWORD)(tick - sws->dwDragRestoreLastTick) >= 200)
+            {
+                sws->hDragRestorePendingWnd = target;
+                sws->dwDragRestoreLastTick = tick;
+                if (IsIconic(target))
+                    ShowWindowAsync(target, SW_RESTORE);
+                if (preview != target && IsIconic(preview))
+                    ShowWindowAsync(preview, SW_RESTORE);
+            }
+            // Keep this choice even if Alt is released while restore is pending.
+            sws->hDragPreviewWnd = target;
+            sws->bDragHoverActivated = TRUE;
+            sws->layout.iIndex = (int)i;
+            return;
+        }
+        sws->hDragRestorePendingWnd = NULL;
+        sws->dwDragRestoreLastTick = 0;
 
-        // Win+D minimizes windows. Restore in their original size and state
-        // without forcibly taking keyboard focus away from the drag source.
-        if (IsIconic(target))
-            ShowWindowAsync(target, SW_SHOWNOACTIVATE);
-        if (preview != target && IsIconic(preview))
-            ShowWindowAsync(preview, SW_SHOWNOACTIVATE);
-
-        // The existing UIAccess switcher overlay remains in its own higher
-        // Z-order band. Move the real application to the front underneath it.
+        // No mouse pass-through is needed: files are dropped after Alt release.
+        // Keep the restored app on its original monitor underneath SWS.
         UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
         BOOL raised = SetWindowPos(target, HWND_TOP, 0, 0, 0, 0, flags);
         if (preview != target)
             raised = SetWindowPos(preview, HWND_TOP, 0, 0, 0, 0, flags) && raised;
         if (!raised)
-            return; // A failed preview can be retried on the next timer tick.
+            return;
 
         sws->iDragHoverIndex = (int)i;
         sws->hDragPreviewWnd = target;
