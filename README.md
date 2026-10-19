@@ -1,5 +1,12 @@
 # ExplorerPatcher
 
+## Experimental AI-assisted SWS Alt+Tab latency fix
+
+> **Unofficial and unverified:** This fork's `fix/sws-progman-alt-tab-latency` branch is an **AI-assisted attempt** to address delayed Simple Window Switcher Alt+Tab and desktop repaint on Windows 11. The fix **may not work** and has not been compiled or tested on a Windows machine.
+
+The build workflow applies [the experimental patch](patches/sws_progman_validation.patch) to the pinned `libs/sws` submodule before compilation; upstream SWS is not modified. For the build, installation, performance test and rollback procedure, see [experimental fix instructions](docs/EXPERIMENTAL_SWS_ALT_TAB.md).
+
+
 This project aims to enhance the working environment on Windows.
 
 ## How to?
