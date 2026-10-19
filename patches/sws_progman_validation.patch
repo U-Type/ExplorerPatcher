@@ -1,0 +1,43 @@
+diff --git a/SimpleWindowSwitcher/sws_WindowSwitcher.c b/SimpleWindowSwitcher/sws_WindowSwitcher.c
+--- a/SimpleWindowSwitcher/sws_WindowSwitcher.c
++++ b/SimpleWindowSwitcher/sws_WindowSwitcher.c
+@@ -1540,20 +1540,31 @@
+ static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
+ {
+     long long a1 = sws_milliseconds_now();
+     if (_this->dwWallpaperSupport == SWS_WALLPAPERSUPPORT_EXPLORER)
+     {
+-        LONG_PTR atom = 0;
+-        RECT rc;
+-        SetRect(&rc, 0, 0, 0, 0);
+-        BOOL bIsWindowWallpaperWindow = IsWindow(_this->hWndWallpaper);
+-        if (bIsWindowWallpaperWindow)
++        // Windows 11 24H2+ uses Progman as the desktop window. Older
++        // versions may use WorkerW. The previous check only accepted
++        // WorkerW, causing an unnecessary synchronous wallpaper re-init
++        // on each Alt+Tab invocation when Progman was returned.
++        BOOL bIsValidWallpaperWindow = FALSE;
++        if (IsWindow(_this->hWndWallpaper))
+         {
+-            GetWindowRect(_this->hWndWallpaper, &rc);
+-            atom = GetClassWord(_this->hWndWallpaper, GCW_ATOM);
++            RECT rc;
++            WCHAR wszClassName[32] = { 0 };
++            if (GetWindowRect(_this->hWndWallpaper, &rc) &&
++                rc.right > rc.left && rc.bottom > rc.top &&
++                GetClassNameW(_this->hWndWallpaper, wszClassName, ARRAYSIZE(wszClassName)))
++            {
++                bIsValidWallpaperWindow =
++                    lstrcmpW(wszClassName, L"WorkerW") == 0 ||
++                    (lstrcmpW(wszClassName, L"Progman") == 0 &&
++                     _this->hWndWallpaper == GetShellWindow() &&
++                     FindWindowExW(_this->hWndWallpaper, NULL, L"SHELLDLL_DefView", NULL) != NULL);
++            }
+         }
+-        if (!bIsWindowWallpaperWindow || rc.right - rc.left == 0 || rc.bottom - rc.top == 0 || atom != RegisterWindowMessageW(L"WorkerW"))
++        if (!bIsValidWallpaperWindow)
+         {
+             //printf("[sws] Invalid wallpaper window detected, reobtaining correct window.\n");
+             _this->hWndWallpaper = NULL;
+             if (sws_WindowHelpers_EnsureWallpaperHWND())
+             {
