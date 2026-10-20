@@ -44,6 +44,10 @@ $old = @'
 $new = @'
     BOOL bIsMouseClicking;
     BOOL bDragHoverMode;
+    // Ignore cursor hover until it travels >=2 screen pixels after SWS opens.
+    BOOL bDragCursorArmed;
+    BOOL bDragOriginValid;
+    POINT ptDragOrigin;
     BOOL bDragHoverActivated;
     BOOL bDragNavigationExplicit;
     HWND hDragPreviewWnd;
@@ -88,6 +92,8 @@ static void _sws_WindowSwitcher_EndDragHover(sws_WindowSwitcher* sws)
         sws->hDragWheelHook = NULL;
     }
     sws->bDragHoverMode = FALSE;
+    sws->bDragCursorArmed = FALSE;
+    sws->bDragOriginValid = FALSE;
     sws->bDragHoverActivated = FALSE;
     sws->bDragNavigationExplicit = FALSE;
     sws->hDragPreviewWnd = NULL;
@@ -119,6 +125,27 @@ static void _sws_WindowSwitcher_StartDragHover(sws_WindowSwitcher* sws)
 // its earlier no-activate Z-order preview was denied or still restoring.
 // Check actual cursor position immediately; Win32 mouse messages can be
 // intercepted by the drag source and the 25ms poll can lag behind release.
+// Ignore both synthetic initial mouse-move messages and stationary-pointer
+// hover previews. Arm permanently after 2 screen pixels of displacement.
+static BOOL _sws_WindowSwitcher_ArmDragCursor(sws_WindowSwitcher* sws, POINT cursor)
+{
+    if (!sws->bDragHoverMode || sws->bDragCursorArmed)
+        return TRUE;
+
+    if (!sws->bDragOriginValid)
+    {
+        sws->ptDragOrigin = cursor;
+        sws->bDragOriginValid = TRUE;
+        return FALSE;
+    }
+    LONGLONG dx = (LONGLONG)cursor.x - sws->ptDragOrigin.x;
+    LONGLONG dy = (LONGLONG)cursor.y - sws->ptDragOrigin.y;
+    if (dx * dx + dy * dy < 4)
+        return FALSE;
+    sws->bDragCursorArmed = TRUE;
+    return TRUE;
+}
+
 static INT _sws_WindowSwitcher_ResolveDragHoverIndex(sws_WindowSwitcher* sws)
 {
     if (!sws) return -1;
@@ -150,6 +177,21 @@ static void _sws_WindowSwitcher_CompleteDragHover(sws_WindowSwitcher* sws)
     {
         ShowWindow(sws->hWnd, SW_HIDE);
         return;
+    }
+
+    // Mouse was never intentionally moved: preserve standard Alt+Tab
+    // selection rather than silently selecting whatever tile spawned below
+    // the stationary pointer. This also checks a last-moment 2px move.
+    if (!sws->bDragCursorArmed)
+    {
+        POINT cursor;
+        if (GetCursorPos(&cursor))
+            _sws_WindowSwitcher_ArmDragCursor(sws, cursor);
+        if (!sws->bDragCursorArmed)
+        {
+            _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(sws);
+            return;
+        }
     }
 
     INT index = _sws_WindowSwitcher_ResolveDragHoverIndex(sws);
@@ -206,7 +248,8 @@ static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
         return;
 
     POINT pt;
-    if (!GetCursorPos(&pt) || !ScreenToClient(sws->hWnd, &pt)) return;
+    if (!GetCursorPos(&pt) || !_sws_WindowSwitcher_ArmDragCursor(sws, pt) ||
+        !ScreenToClient(sws->hWnd, &pt)) return;
     sws_WindowSwitcherLayoutWindow* list = sws->layout.pWindowList.pList;
     if (!list) return;
     for (unsigned int i = 0; i < sws->layout.pWindowList.cbSize; i++)
@@ -262,6 +305,8 @@ static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
     if (!IsWindowVisible(_this->hWnd))
     {
         _this->bDragHoverMode = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        _this->bDragCursorArmed = FALSE;
+        _this->bDragOriginValid = FALSE;
         _this->bDragHoverActivated = FALSE;
         _this->bDragNavigationExplicit = FALSE;
         _this->hDragPreviewWnd = NULL;
@@ -343,6 +388,13 @@ $old = @'
 $new = @'
             //SetWindowPos(_this->hWnd, 0, _this->layout.iX, _this->layout.iY, _this->layout.iWidth, _this->layout.iHeight, SWP_NOZORDER);
             _this->dwOriginalScrollWheelBehavior = _this->dwScrollWheelBehavior;
+            // Start the two-pixel dead zone when the overlay actually shows,
+            // not earlier while the window list is being computed.
+            if (_this->bDragHoverMode)
+            {
+                _this->bDragCursorArmed = FALSE;
+                _this->bDragOriginValid = GetCursorPos(&_this->ptDragOrigin);
+            }
             _sws_WindowSwitcher_StartDragHover(_this);
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
@@ -481,6 +533,26 @@ $new = @'
         sws->layout.iIndex = (int)i;
         sws->cwIndex = (int)i;
         sws->cwMask = SWS_WINDOWFLAG_IS_ON_WINDOW | SWS_WINDOWFLAG_IS_ON_THUMBNAIL;
+'@
+Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
+
+# SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 16 — mouse hover must
+# pass the same two-pixel threshold as the drag-hover timer.
+$old = @'
+    else if (uMsg == WM_MOUSEMOVE)
+    {
+        int x = GET_X_LPARAM(lParam);
+'@
+$new = @'
+    else if (uMsg == WM_MOUSEMOVE)
+    {
+        if (_this->bDragHoverMode && !_this->bDragCursorArmed)
+        {
+            POINT cursor;
+            if (!GetCursorPos(&cursor) || !_sws_WindowSwitcher_ArmDragCursor(_this, cursor))
+                return 0; // initial synthetic mouse movement is not a hover
+        }
+        int x = GET_X_LPARAM(lParam);
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 
