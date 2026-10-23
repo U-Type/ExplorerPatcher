@@ -48,11 +48,8 @@ $new = @'
     BOOL bDragCursorArmed;
     BOOL bDragOriginValid;
     POINT ptDragOrigin;
-    BOOL bDragHoverActivated;
     BOOL bDragNavigationExplicit;
     HWND hDragPreviewWnd;
-    HWND hDragRestorePendingWnd;
-    DWORD dwDragRestoreLastTick;
     INT iDragHoverIndex;
     HHOOK hDragWheelHook;
 '@
@@ -94,12 +91,9 @@ static void _sws_WindowSwitcher_EndDragHover(sws_WindowSwitcher* sws)
     sws->bDragHoverMode = FALSE;
     sws->bDragCursorArmed = FALSE;
     sws->bDragOriginValid = FALSE;
-    sws->bDragHoverActivated = FALSE;
     sws->bDragNavigationExplicit = FALSE;
     sws->hDragPreviewWnd = NULL;
     sws->iDragHoverIndex = -1;
-    sws->hDragRestorePendingWnd = NULL;
-    sws->dwDragRestoreLastTick = 0;
 }
 
 static void _sws_WindowSwitcher_StartDragHover(sws_WindowSwitcher* sws)
@@ -243,46 +237,59 @@ static void _sws_WindowSwitcher_PollDragHover(sws_WindowSwitcher* sws)
             _sws_WindowSwitcher_SwitchToSelectedItemAndDismiss(sws);
         return;
     }
-    // Explicit Tab or wheel input restores normal Alt+Tab selection.
+    // During an OLE drag WM_MOUSEMOVE may not reach SWS. Cursor polling
+    // exclusively controls visual selection and never activates real windows.
     if (sws->bDragNavigationExplicit || !(GetAsyncKeyState(VK_LBUTTON) & 0x8000))
         return;
+    POINT cursor;
+    if (!GetCursorPos(&cursor) || !_sws_WindowSwitcher_ArmDragCursor(sws, cursor))
+        return;
 
-    POINT pt;
-    if (!GetCursorPos(&pt) || !_sws_WindowSwitcher_ArmDragCursor(sws, pt) ||
-        !ScreenToClient(sws->hWnd, &pt)) return;
     sws_WindowSwitcherLayoutWindow* list = sws->layout.pWindowList.pList;
     if (!list) return;
-    for (unsigned int i = 0; i < sws->layout.pWindowList.cbSize; i++)
+    INT hit = _sws_WindowSwitcher_ResolveDragHoverIndex(sws);
+    INT hover = -1;
+    DWORD mask = 0;
+    POINT local = cursor;
+    if (hit >= 0 && ScreenToClient(sws->hWnd, &local))
     {
-        if (!PtInRect(&list[i].rcThumbnail, pt)) continue;
-        // Track the ORIGINAL thumbnail slot, not the current MRU position.
-        // Re-entering a slot after hovering elsewhere activates it again.
-        if (sws->iDragHoverIndex == (int)i) return;
-        HWND target = list[i].hWnd;
-        if (!IsWindow(target) || target == sws->hWnd ||
-            (sws->layout.bIncludeWallpaper && target == sws->layout.hWndWallpaper))
+        HWND target = list[hit].hWnd;
+        if (IsWindow(target) &&
+            !(sws->layout.bIncludeWallpaper && target == sws->layout.hWndWallpaper) &&
+            PtInRect(&list[hit].rcWindow, local))
         {
-            sws->iDragHoverIndex = -1;
-            return;
+            hover = hit;
+            mask = SWS_WINDOWFLAG_IS_ON_WINDOW;
+            if (PtInRect(&list[hit].rcThumbnail, local))
+                mask |= SWS_WINDOWFLAG_IS_ON_THUMBNAIL;
         }
+    }
 
-        sws->iDragHoverIndex = (int)i;
-        sws->hDragPreviewWnd = target;
-        sws->bDragHoverActivated = TRUE; // set before focus-loss notification
-        sws->layout.iIndex = (int)i;
-        sws->cwIndex = (int)i;
-        sws->cwMask = SWS_WINDOWFLAG_IS_ON_WINDOW | SWS_WINDOWFLAG_IS_ON_THUMBNAIL;
-        HWND popup = sws_WindowHelpers_GetLastActivePopup(target);
-        SwitchToThisWindow(IsWindow(popup) && IsWindowVisible(popup) ? popup : target, TRUE);
+    if (sws->cwIndex != hover || sws->cwMask != mask ||
+        (hover >= 0 && sws->layout.iIndex != hover))
+    {
+        sws->cwOldIndex = sws->cwIndex;
+        sws->cwOldMask = sws->cwMask;
+        sws->cwIndex = hover;
+        sws->cwMask = mask;
+        if (hover >= 0)
+        {
+            sws->layout.iIndex = hover;
+            sws->iDragHoverIndex = hover;
+            sws->hDragPreviewWnd = list[hover].hWnd;
+        }
+        else
+            sws->iDragHoverIndex = -1;
 
+        // Full redraw cleans up the previously selected tile's contour.
         if (sws->dwTheme == SWS_WINDOWSWITCHER_THEME_NONE)
             sws_WindowSwitcher_Paint(sws, SWS_WINDOWSWITCHER_PAINTFLAGS_REDRAWENTIRE);
         else
+        {
+            sws->dwPaintFlags |= SWS_WINDOWSWITCHER_PAINTFLAGS_REDRAWENTIRE;
             RedrawWindow(sws->hWnd, NULL, NULL, RDW_INVALIDATE | RDW_INTERNALPAINT);
-        return;
+        }
     }
-    // A thumbnail can also be re-entered after crossing empty grid space.
-    sws->iDragHoverIndex = -1;
 }
 
 static void WINAPI _sws_WindowSwitcher_Calculate(
@@ -307,12 +314,9 @@ static void WINAPI _sws_WindowSwitcher_Show(sws_WindowSwitcher* _this)
         _this->bDragHoverMode = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         _this->bDragCursorArmed = FALSE;
         _this->bDragOriginValid = FALSE;
-        _this->bDragHoverActivated = FALSE;
         _this->bDragNavigationExplicit = FALSE;
         _this->hDragPreviewWnd = NULL;
         _this->iDragHoverIndex = -1;
-        _this->hDragRestorePendingWnd = NULL;
-        _this->dwDragRestoreLastTick = 0;
     }
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
@@ -478,64 +482,6 @@ $new = @'
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
 
-# SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 16 (foreground-safe previews).
-# Avoid taskbar flashing when a drag's OLE source owns focus/capture.
-$old = @'
-        sws->iDragHoverIndex = (int)i;
-        sws->hDragPreviewWnd = target;
-        sws->bDragHoverActivated = TRUE; // set before focus-loss notification
-        sws->layout.iIndex = (int)i;
-        sws->cwIndex = (int)i;
-        sws->cwMask = SWS_WINDOWFLAG_IS_ON_WINDOW | SWS_WINDOWFLAG_IS_ON_THUMBNAIL;
-        HWND popup = sws_WindowHelpers_GetLastActivePopup(target);
-        SwitchToThisWindow(IsWindow(popup) && IsWindowVisible(popup) ? popup : target, TRUE);
-'@
-$new = @'
-        // Win+D can leave windows minimized and raise the desktop. Restore
-        // first, then on a later poll reapply normal-window Z ordering.
-        HWND popup = sws_WindowHelpers_GetLastActivePopup(target);
-        HWND preview = (IsWindow(popup) && IsWindowVisible(popup)) ? popup : target;
-        BOOL minimized = IsIconic(target) || (preview != target && IsIconic(preview));
-        if (minimized)
-        {
-            DWORD tick = GetTickCount();
-            if (sws->hDragRestorePendingWnd != target ||
-                (DWORD)(tick - sws->dwDragRestoreLastTick) >= 200)
-            {
-                sws->hDragRestorePendingWnd = target;
-                sws->dwDragRestoreLastTick = tick;
-                if (IsIconic(target))
-                    ShowWindowAsync(target, SW_RESTORE);
-                if (preview != target && IsIconic(preview))
-                    ShowWindowAsync(preview, SW_RESTORE);
-            }
-            // Keep this choice even if Alt is released while restore is pending.
-            sws->hDragPreviewWnd = target;
-            sws->bDragHoverActivated = TRUE;
-            sws->layout.iIndex = (int)i;
-            return;
-        }
-        sws->hDragRestorePendingWnd = NULL;
-        sws->dwDragRestoreLastTick = 0;
-
-        // No mouse pass-through is needed: files are dropped after Alt release.
-        // Keep the restored app on its original monitor underneath SWS.
-        UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
-        BOOL raised = SetWindowPos(target, HWND_TOP, 0, 0, 0, 0, flags);
-        if (preview != target)
-            raised = SetWindowPos(preview, HWND_TOP, 0, 0, 0, 0, flags) && raised;
-        if (!raised)
-            return;
-
-        sws->iDragHoverIndex = (int)i;
-        sws->hDragPreviewWnd = target;
-        sws->bDragHoverActivated = TRUE;
-        sws->layout.iIndex = (int)i;
-        sws->cwIndex = (int)i;
-        sws->cwMask = SWS_WINDOWFLAG_IS_ON_WINDOW | SWS_WINDOWFLAG_IS_ON_THUMBNAIL;
-'@
-Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
-
 # SimpleWindowSwitcher/sws_WindowSwitcher.c: patch 16 — mouse hover must
 # pass the same two-pixel threshold as the drag-hover timer.
 $old = @'
@@ -546,12 +492,9 @@ $old = @'
 $new = @'
     else if (uMsg == WM_MOUSEMOVE)
     {
-        if (_this->bDragHoverMode && !_this->bDragCursorArmed)
-        {
-            POINT cursor;
-            if (!GetCursorPos(&cursor) || !_sws_WindowSwitcher_ArmDragCursor(_this, cursor))
-                return 0; // initial synthetic mouse movement is not a hover
-        }
+        // Drag-mode hit testing is timer-driven, not WM_MOUSEMOVE-driven.
+        if (_this->bDragHoverMode)
+            return 0;
         int x = GET_X_LPARAM(lParam);
 '@
 Replace-Single 'SimpleWindowSwitcher/sws_WindowSwitcher.c' $old $new
